@@ -35,6 +35,9 @@ explicitly requests them.
 
 ## Development
 
+- Before adding or changing application settings, load
+  `.agents/skills/settings/SKILL.md`. Store all new settings in the database
+  `settings` table, never in `config.yaml` or `internal/config.Config`.
 - Before changing the server web UI's visual elements, load the project `design`
   skill at `.agents/skills/design/SKILL.md` and follow its element tokens and light/dark theme
   requirements for every new or changed element. The HTML-preview workflow above

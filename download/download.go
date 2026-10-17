@@ -51,25 +51,36 @@ func (r *Routes) candidates() []string {
 	return append(addresses, r.Public...)
 }
 
+// try makes one pass through all routes. The download queue owns cycle retries.
 func (r *Routes) try(ctx context.Context, event func(Event), stage string, request func(string) error) error {
 	var last error
-	for attempt := 0; ; attempt++ {
+	addresses := r.candidates()
+	if len(addresses) == 0 {
+		return fmt.Errorf("no configured download routes")
+	}
+	for _, address := range addresses {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		addresses := r.candidates()
-		if len(addresses) == 0 {
-			return fmt.Errorf("no configured download routes")
-		}
-		for _, address := range addresses {
-			if err := ctx.Err(); err != nil {
-				return err
+		r.mu.Lock()
+		until := r.cooling[address]
+		r.mu.Unlock()
+		if wait := time.Until(until); wait > 0 {
+			event(Event{Stage: "retrying"})
+			timer := time.NewTimer(wait)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
 			}
+		}
+		if stage == "downloading" {
 			r.mu.Lock()
-			until := r.cooling[address]
+			wait := max(0, time.Until(r.nextDownload))
+			r.nextDownload = time.Now().Add(wait + 100*time.Millisecond)
 			r.mu.Unlock()
-			if wait := time.Until(until); wait > 0 {
-				event(Event{Stage: "retrying"})
+			if wait > 0 {
 				timer := time.NewTimer(wait)
 				select {
 				case <-ctx.Done():
@@ -78,55 +89,23 @@ func (r *Routes) try(ctx context.Context, event func(Event), stage string, reque
 				case <-timer.C:
 				}
 			}
-			if stage == "downloading" {
-				r.mu.Lock()
-				wait := max(0, time.Until(r.nextDownload))
-				r.nextDownload = time.Now().Add(wait + 100*time.Millisecond)
-				r.mu.Unlock()
-				if wait > 0 {
-					timer := time.NewTimer(wait)
-					select {
-					case <-ctx.Done():
-						timer.Stop()
-						return ctx.Err()
-					case <-timer.C:
-					}
-				}
+		}
+		event(Event{Stage: stage})
+		err := request(address)
+		if err == nil {
+			return nil
+		}
+		last = err
+		if errors.Is(err, errRateLimit) {
+			r.mu.Lock()
+			if r.cooling == nil {
+				r.cooling = make(map[string]time.Time)
 			}
-			event(Event{Stage: stage})
-			err := request(address)
-			if err == nil {
-				return nil
-			}
-			last = err
-			if errors.Is(err, errRateLimit) {
-				r.mu.Lock()
-				if r.cooling == nil {
-					r.cooling = make(map[string]time.Time)
-				}
-				r.cooling[address] = time.Now().Add(30 * time.Second)
-				r.mu.Unlock()
-			}
-		}
-		if errors.Is(last, errNoMatch) || (attempt >= 5 && !errors.Is(last, errRateLimit)) {
-			return last
-		}
-		wait := time.Second << min(attempt, 4)
-		if errors.Is(last, errRateLimit) {
-			wait = 0
-		}
-		if wait > 30*time.Second {
-			wait = 30 * time.Second
-		}
-		event(Event{Stage: "retrying"})
-		timer := time.NewTimer(wait)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return ctx.Err()
-		case <-timer.C:
+			r.cooling[address] = time.Now().Add(30 * time.Second)
+			r.mu.Unlock()
 		}
 	}
+	return last
 }
 
 var errRateLimit = errors.New("download rate limited")

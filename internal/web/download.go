@@ -117,6 +117,9 @@ func (d *downloadJob) enqueue(tracks []store.Track) {
 	}
 	added := 0
 	for _, t := range tracks {
+		if t.DownloadFailed {
+			continue
+		}
 		if t.FilePath != "" && download.FileExists(t.FilePath) {
 			continue
 		}
@@ -182,6 +185,10 @@ func (d *downloadJob) runQueue(ctx context.Context) {
 }
 
 func (d *downloadJob) runBatch(ctx context.Context, tracks []store.Track) {
+	retryLimit, settingsErr := d.store.DownloadRetries()
+	if settingsErr != nil {
+		d.logger.Error("unable to read download_retries setting; downloads will not start")
+	}
 	d.mu.Lock()
 	routes := &download.Routes{
 		Personal: append([]string(nil), d.config.PersonalProxy...), Public: append([]string(nil), d.config.PublicProxy...),
@@ -192,7 +199,8 @@ func (d *downloadJob) runBatch(ctx context.Context, tracks []store.Track) {
 		state.ID, state.SourceID = t.ID, t.SourceID
 		// A different user's sync may have queued an older snapshot. Read the
 		// latest source URL and check the deterministic file path again.
-		if latest, err := d.store.Track(t.ID); err == nil {
+		latest, trackErr := d.store.Track(t.ID)
+		if trackErr == nil {
 			t = latest
 		}
 		state.Source, state.Artist, state.Title = t.Source, t.Artist, t.Title
@@ -211,11 +219,23 @@ func (d *downloadJob) runBatch(ctx context.Context, tracks []store.Track) {
 		valid, err := d.saved(t)
 		if ctx.Err() != nil {
 			state.Stage, state.Message = "stopped", "Stopped"
+		} else if trackErr != nil {
+			state.Stage, state.Message = "failed", "Could not read saved download state"
+			d.logger.Error("unable to read track download state", zap.Int64("track_id", t.ID))
 		} else if err != nil {
 			state.Stage, state.Message = "failed", "Could not inspect saved file; check file permissions"
 		} else if valid {
 			state.Stage = "skipped"
 			state.Message = "Already downloaded"
+		} else if t.DownloadFailed {
+			state.Stage, state.Message = "failed", "Download retry limit reached"
+		} else if settingsErr != nil {
+			state.Stage, state.Message = "failed", "Could not read download_retries setting; expected a positive integer"
+		} else if t.DownloadAttempts >= retryLimit {
+			state.Stage, state.Message = "failed", "Download retry limit reached"
+			if err := d.store.SetDownloadFailed(t.ID); err != nil {
+				d.logger.Error("unable to save failed download state", zap.Int64("track_id", t.ID))
+			}
 		} else {
 			fields := []zap.Field{zap.String("source", t.Source), zap.String("artist", t.Artist), zap.String("title", t.Title)}
 			d.logger.Info("track download started", fields...)
@@ -225,13 +245,41 @@ func (d *downloadJob) runBatch(ctx context.Context, tracks []store.Track) {
 				d.publish(state)
 			}
 			candidate := download.Track{Source: t.Source, SourceID: t.SourceID, Artist: t.Artist, Title: t.Title, AudioURL: t.AudioURL, CoverURL: t.CoverURL}
-			sourceURL, saveErr := download.Resolve(ctx, candidate, routes, event)
-			if saveErr == nil {
-				saveErr = d.store.SetSourceURL(t.ID, sourceURL)
-			}
-			if saveErr == nil {
-				candidate.AudioURL = sourceURL
-				_, saveErr = download.Save(ctx, candidate, d.config.DownloadDir, routes, event)
+			var saveErr error
+			for attempt := t.DownloadAttempts; attempt < retryLimit; attempt++ {
+				if saveErr = ctx.Err(); saveErr != nil {
+					break
+				}
+				sourceURL, resolveErr := download.Resolve(ctx, candidate, routes, event)
+				saveErr = resolveErr
+				if saveErr == nil {
+					saveErr = d.store.SetSourceURL(t.ID, sourceURL)
+					if saveErr != nil {
+						d.logger.Error("unable to save resolved download URL", zap.Int64("track_id", t.ID))
+						break
+					}
+					candidate.AudioURL = sourceURL
+					_, saveErr = download.Save(ctx, candidate, d.config.DownloadDir, routes, event)
+				}
+				if saveErr == nil || ctx.Err() != nil {
+					break
+				}
+				// Only completed, unsuccessful cycles consume the persisted budget.
+				if err := d.store.RecordDownloadFailure(t.ID, retryLimit); err != nil {
+					d.logger.Error("unable to save download attempt", zap.Int64("track_id", t.ID))
+					break
+				}
+				if attempt+1 < retryLimit {
+					state.Stage, state.Message = "retrying", "Retrying download"
+					state.Bytes, state.TotalBytes = 0, 0
+					d.publish(state)
+					timer := time.NewTimer(time.Second << min(attempt, 4))
+					select {
+					case <-ctx.Done():
+						timer.Stop()
+					case <-timer.C:
+					}
+				}
 			}
 			if ctx.Err() != nil && saveErr != nil {
 				state.Stage = "stopped"
@@ -388,6 +436,9 @@ func (s *Server) downloadStatus(w http.ResponseWriter, r *http.Request) {
 		stage := "waiting"
 		if t.FilePath != "" {
 			stage = "missing"
+		}
+		if t.DownloadFailed {
+			stage = "failed"
 		}
 		status := d.tracks[trackKey(t.Source, t.SourceID)]
 		if status.Stage != "" && status.Stage != "done" && status.Stage != "skipped" {

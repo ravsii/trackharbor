@@ -35,6 +35,20 @@ func (s *Store) SetDownloadsStopped(stopped bool) error {
 	return s.SetSetting(settingDownloadsStopped, strconv.FormatBool(stopped))
 }
 
+// DownloadRetries counts full download cycles, including the first attempt.
+func (s *Store) DownloadRetries() (int, error) {
+	value, err := s.Setting("download_retries")
+	if err != nil {
+		return 0, err
+	}
+
+	retries, err := strconv.Atoi(value)
+	if err != nil || retries < 1 {
+		return 0, fmt.Errorf("invalid download_retries setting: expected a positive integer")
+	}
+	return retries, nil
+}
+
 type DownloadSettings struct {
 	PersonalProxy []string
 	PublicProxy   []string

@@ -21,6 +21,8 @@ type Track struct {
 	Source, SourceID, Artist, Title string
 	AddedAt                         int64
 	AudioURL, CoverURL, FilePath    string
+	DownloadAttempts                int
+	DownloadFailed                  bool
 }
 type Store struct {
 	db          *sql.DB
@@ -87,8 +89,8 @@ func (s *Store) Connected(userID int64, source string) (bool, error) {
 	return n > 0, err
 }
 
-const catalogSelect = `SELECT t.id,t.source,t.source_key,t.artist,t.name,t.cover_url,0,t.source_url FROM tracks t`
-const personalSelect = `SELECT t.id,t.source,t.source_key,t.artist,t.name,t.cover_url,p.added_at,t.source_url
+const catalogSelect = `SELECT t.id,t.source,t.source_key,t.artist,t.name,t.cover_url,0,t.source_url,t.download_attempts,t.download_failed FROM tracks t`
+const personalSelect = `SELECT t.id,t.source,t.source_key,t.artist,t.name,t.cover_url,p.added_at,t.source_url,t.download_attempts,t.download_failed
  FROM user_tracks p JOIN tracks t ON t.id=p.track_id`
 
 func (s *Store) List(userID int64, source string) ([]Track, error) {
@@ -138,7 +140,7 @@ func (s *Store) queryTracks(query string, args ...any) ([]Track, error) {
 	items := []Track{}
 	for rows.Next() {
 		var t Track
-		if err = rows.Scan(&t.ID, &t.Source, &t.SourceID, &t.Artist, &t.Title, &t.CoverURL, &t.AddedAt, &t.AudioURL); err != nil {
+		if err = rows.Scan(&t.ID, &t.Source, &t.SourceID, &t.Artist, &t.Title, &t.CoverURL, &t.AddedAt, &t.AudioURL, &t.DownloadAttempts, &t.DownloadFailed); err != nil {
 			return nil, err
 		}
 		path, err := download.FilePath(s.downloadDir, t.Source, t.SourceID)
@@ -154,6 +156,17 @@ func (s *Store) queryTracks(query string, args ...any) ([]Track, error) {
 }
 func (s *Store) SetSourceURL(id int64, sourceURL string) error {
 	_, err := s.db.Exec(`UPDATE tracks SET source_url=? WHERE id=?`, sourceURL, id)
+	return err
+}
+
+func (s *Store) RecordDownloadFailure(id int64, limit int) error {
+	_, err := s.db.Exec(`UPDATE tracks SET download_attempts=download_attempts+1,
+		download_failed=CASE WHEN download_attempts+1>=? THEN 1 ELSE download_failed END WHERE id=?`, limit, id)
+	return err
+}
+
+func (s *Store) SetDownloadFailed(id int64) error {
+	_, err := s.db.Exec(`UPDATE tracks SET download_failed=1 WHERE id=?`, id)
 	return err
 }
 
