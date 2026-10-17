@@ -88,6 +88,7 @@ func New(db *store.Store, logger *zap.Logger, configs ...config.Config) http.Han
 	mux.HandleFunc("POST /download/stop", s.stopDownloads)
 	mux.HandleFunc("GET /download/events", s.downloadEvents)
 	mux.HandleFunc("POST /settings/proxy-sources", s.saveProxySources)
+	mux.HandleFunc("POST /settings/downloads", s.saveDownloadSettings)
 	mux.HandleFunc("POST /settings/public/import", s.importPublicProxies)
 	mux.HandleFunc("GET /settings/public/import/status", s.publicProxyImportStatus)
 	mux.HandleFunc("POST /settings/personal", s.addPersonalProxy)
@@ -231,6 +232,7 @@ type pageData struct {
 	PublicProxyCount                          int
 	ProxyImport                               proxyImportState
 	SourcesSaved                              bool
+	DownloadRetries                           int
 }
 
 func (s *Server) page(w http.ResponseWriter, r *http.Request) {
@@ -267,6 +269,11 @@ func (s *Server) page(w http.ResponseWriter, r *http.Request) {
 	} else if source == "settings" {
 		data.Users = users
 		data.Name = "Settings"
+		data.DownloadRetries, err = s.store.DownloadRetries()
+		if err != nil {
+			http.Error(w, "unable to read download attempts setting", http.StatusInternalServerError)
+			return
+		}
 		proxySources, settingsErr := s.store.Setting("proxy_sources")
 		if settingsErr != nil {
 			http.Error(w, "unable to read download settings", http.StatusInternalServerError)

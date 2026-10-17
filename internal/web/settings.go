@@ -281,6 +281,25 @@ func settingsProxies(raw string) ([]string, error) {
 	return proxies, nil
 }
 
+func (s *Server) saveDownloadSettings(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1024)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid download settings form", http.StatusBadRequest)
+		return
+	}
+	retries, err := strconv.Atoi(strings.TrimSpace(r.PostForm.Get("download_retries")))
+	if err != nil || retries < 1 {
+		http.Error(w, "enter a whole number of at least 1", http.StatusBadRequest)
+		return
+	}
+	if err = s.store.SetSetting("download_retries", strconv.Itoa(retries)); err != nil {
+		http.Error(w, "unable to save download settings; try again", http.StatusInternalServerError)
+		return
+	}
+	s.logger.Info("download settings saved")
+	settingsResponse(w, r)
+}
+
 func (s *Server) saveProxySources(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 256<<10)
 	if err := r.ParseForm(); err != nil {

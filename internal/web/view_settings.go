@@ -33,6 +33,22 @@ const settingsTemplate = `{{define "settings"}}
 </section>
 
 <section class="content-section">
+  <header class="section-heading"><h2>Downloads</h2></header>
+  <form class="form" id="download-settings-form" action="/settings/downloads?account_id={{.User.ID}}" method="post">
+    <label class="field">Maximum download attempts
+      <input name="download_retries" type="number" min="1" step="1" required value="{{.DownloadRetries}}"
+        aria-describedby="download-retries-help download-settings-feedback">
+    </label>
+    <p class="helper" id="download-retries-help">Total download cycles per track, including the first attempt. Each cycle tries direct access and the configured proxies. Minimum: 1.</p>
+    <p class="helper">Changes apply to the next download batch. Attempts already used still count; failed tracks are not restarted automatically.</p>
+    <div class="actions">
+      <button class="button primary" type="submit">{{template "icon" "checkmark-circle-02"}}Save download settings</button>
+    </div>
+    <div id="download-settings-feedback" class="feedback" role="status" aria-live="polite"></div>
+  </form>
+</section>
+
+<section class="content-section">
   <header class="section-heading"><h2>Public proxy sources</h2></header>
   <p class="helper">Spotify and YouTube try direct access, personal proxies, then public proxies. VK uses direct access.</p>
   <form class="form" id="proxy-sources-form" action="/settings/proxy-sources?account_id={{.User.ID}}" method="post">

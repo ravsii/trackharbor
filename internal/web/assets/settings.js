@@ -74,18 +74,20 @@
       }
       return;
     }
-    if (form.id !== 'proxy-sources-form' && form.id !== 'personal-proxy-form' && !form.classList.contains('proxy-delete')) return;
+    if (form.id !== 'proxy-sources-form' && form.id !== 'personal-proxy-form' && form.id !== 'download-settings-form' && !form.classList.contains('proxy-delete')) return;
     event.preventDefault();
     const removing = form.classList.contains('proxy-delete');
     if (removing && !window.confirm(`Remove proxy ${form.closest('[data-proxy-id]').dataset.proxyHost}?`)) return;
     const savingSources = form.id === 'proxy-sources-form';
-    const feedback = document.getElementById(savingSources ? 'proxy-sources-feedback' : 'personal-proxy-feedback');
+    const savingDownloads = form.id === 'download-settings-form';
+    const feedback = document.getElementById(savingDownloads ? 'download-settings-feedback' : savingSources ? 'proxy-sources-feedback' : 'personal-proxy-feedback');
     const button = form.querySelector('button[type="submit"]') || document.querySelector(`button[form="${form.id}"]`);
     button.disabled = true;
-    feedback.textContent = form.id === 'personal-proxy-form' ? 'Checking YouTube through proxy…' : savingSources ? 'Saving sources…' : 'Removing proxy…';
+    feedback.textContent = savingDownloads ? 'Saving…' : form.id === 'personal-proxy-form' ? 'Checking YouTube through proxy…' : savingSources ? 'Saving sources…' : 'Removing proxy…';
     feedback.dataset.error = 'false';
     feedback.setAttribute('role', 'status');
     if (savingSources) form.elements.proxy_sources.removeAttribute('aria-invalid');
+    if (savingDownloads) form.elements.download_retries.removeAttribute('aria-invalid');
     if (form.id === 'personal-proxy-form') form.elements.address.removeAttribute('aria-invalid');
     try {
       const data = new URLSearchParams(new FormData(form));
@@ -100,10 +102,15 @@
         feedback.dataset.error = 'true';
         feedback.setAttribute('role', 'alert');
         if (savingSources && response.status === 400) form.elements.proxy_sources.setAttribute('aria-invalid', 'true');
+        if (savingDownloads && response.status === 400) form.elements.download_retries.setAttribute('aria-invalid', 'true');
         if (form.id === 'personal-proxy-form' && response.status === 400) form.elements.address.setAttribute('aria-invalid', 'true');
         return;
       }
-      htmx.ajax('GET', savingSources ? '/?source=settings&sources_saved=1' : '/?source=settings', {target: '#content', select: '#content', swap: 'outerHTML'});
+      if (savingDownloads) {
+        feedback.textContent = 'Download settings saved.';
+      } else {
+        htmx.ajax('GET', savingSources ? '/?source=settings&sources_saved=1' : '/?source=settings', {target: '#content', select: '#content', swap: 'outerHTML'});
+      }
     } catch (_) {
       feedback.textContent = 'Could not save settings. Try again.';
       feedback.dataset.error = 'true';
