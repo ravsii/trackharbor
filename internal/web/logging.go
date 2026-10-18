@@ -83,7 +83,8 @@ func logRequests(logger *zap.Logger, mux *http.ServeMux, next http.Handler) http
 
 func routineRequest(route string) bool {
 	switch route {
-	case "GET /assets/", "GET /status", "GET /ping-status", "GET /download/status", "GET /audio", "GET /audio/tracks", "GET /auth/status":
+	case "GET /assets/", "GET /status", "GET /ping-status", "GET /download/status", "GET /audio", "GET /audio/tracks", "GET /auth/status",
+		"GET /webdav", "GET /webdav/", "OPTIONS /webdav", "OPTIONS /webdav/", "PROPFIND /webdav", "PROPFIND /webdav/":
 		return true
 	}
 	return false

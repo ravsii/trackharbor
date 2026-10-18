@@ -97,6 +97,10 @@ func New(db *store.Store, logger *zap.Logger, configs ...config.Config) http.Han
 	mux.HandleFunc("GET /settings/personal/{id}/address", s.personalProxyAddress)
 	mux.HandleFunc("GET /audio", s.playAudio)
 	mux.HandleFunc("GET /audio/tracks", s.playableTracks)
+	for _, method := range []string{"GET", "OPTIONS", "PROPFIND"} {
+		mux.HandleFunc(method+" /webdav", s.serveWebDAV)
+		mux.HandleFunc(method+" /webdav/", s.serveWebDAV)
+	}
 	mux.HandleFunc("GET /login", s.loginPage)
 	mux.HandleFunc("POST /login", s.login)
 	mux.HandleFunc("POST /logout", s.logout)
@@ -109,6 +113,10 @@ func New(db *store.Store, logger *zap.Logger, configs ...config.Config) http.Han
 		w.Header().Set("Referrer-Policy", "same-origin")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' https:; style-src 'self'; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
+		if r.URL.Path == "/webdav" || strings.HasPrefix(r.URL.Path, "/webdav/") {
+			s.serveWebDAV(w, r)
+			return
+		}
 		public := r.URL.Path == "/login" || strings.HasPrefix(r.URL.Path, "/assets/")
 		if !public {
 			user, sid, err := s.auth.authenticate(r)
